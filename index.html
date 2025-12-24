@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ME RI CHÍT MỚT</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; font-family: "Segoe UI", sans-serif; }
+    #canvas-container { width: 100%; height: 100vh; display: block; }
+
+    #ui-layer {
+      position: absolute; bottom: 30px; width: 100%;
+      text-align: center; pointer-events: none; z-index: 100;
+    }
+    .guide {
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 13px;
+      margin-bottom: 14px;
+      text-shadow: 0 2px 4px black;
+      line-height: 1.4;
+      padding: 0 12px;
+    }
+
+    button {
+      pointer-events: auto; cursor: pointer;
+      background: linear-gradient(to bottom, #D32F2F, #8B0000);
+      color: #FFF; border: 2px solid #FFD700;
+      padding: 14px 44px; border-radius: 30px;
+      font-weight: 800; font-size: 16px;
+      box-shadow: 0 0 30px rgba(255, 0, 0, 0.6);
+      animation: pulse 1.5s infinite;
+      user-select: none;
+    }
+    @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+
+    #copyright {
+      position: absolute;
+      bottom: 10px;
+      right: 15px;
+      color: rgba(255, 255, 255, 0.3);
+      font-size: 12px;
+      z-index: 100;
+      pointer-events: none;
+      font-style: italic;
+    }
+
+    /* Fullscreen image viewer */
+    #viewer {
+      position: fixed; inset: 0;
+      display: none;
+      background: rgba(0,0,0,.82);
+      z-index: 9999;
+      touch-action: none;
+    }
+    #viewerImg {
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%,-50%) scale(1);
+      max-width: 92vw; max-height: 92vh;
+      border-radius: 16px;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    #error-log { display: none; position: absolute; top: 0; left: 0; color: red; background: rgba(0,0,0,0.8); z-index: 999; padding: 10px; }
+  </style>
+</head>
+
+<body>
+  <div id="error-log"></div>
+
+  <div id="ui-layer">
+    <div class="guide">
+        <b>Hướng dẫn cho nhó:</b><br/>
+      📱 <b>Phone:</b> Tap mở ảnh • Swipe xoay • <b>Pinch OUT</b> mở ảnh • <b>Pinch IN</b> về cây thông
+      <br/>
+      💻 <b>Laptop:</b> Di chuột xoay • Kéo chuột xoay nhanh • Click ảnh để mở • Lăn chuột zoom (khi đang mở) • Space: TREE/GALLERY
+    </div>
+    <button id="btnStart" onclick="startSystem()">BẤM VÔ ĐÂY ĐI TÌNH YÊU</button>
+  </div>
+
+  <div id="copyright">© by vandiep</div>
+  <div id="canvas-container"></div>
+
+  <!-- Viewer overlay -->
+  <div id="viewer">
+    <img id="viewerImg" src="" alt="photo" />
+  </div>
+
+  <script>
+    // ==========================================
+    // 1) RESOURCES
+    // ==========================================
+    const MUSIC_URL = "./audio.mp3";
+    const bgMusic = new Audio(MUSIC_URL);
+    bgMusic.loop = true;
+    bgMusic.volume = 1.0;
+
+    // NOTE: match EXACT filenames in your folder
+    const photoFiles = [
+      "./image1.jpg",
+      "./image2.jpg",
+      "./image3.jpeg",
+      "./image4.jpg",
+      "./image5.jpg"
+    ];
+
+    const loader = new THREE.TextureLoader();
+    const photoTextures = photoFiles.map((src) => loader.load(
+      src,
+      undefined,
+      undefined,
+      (err) => console.warn("Failed to load:", src, err)
+    ));
+
+    function createCustomTexture(type) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 128; canvas.height = 128;
+      const ctx = canvas.getContext("2d");
+      const cx = 64, cy = 64;
+
+      if (type === "gold_glow") {
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, 40);
+        grd.addColorStop(0, "#FFFFFF");
+        grd.addColorStop(0.2, "#FFFFE0");
+        grd.addColorStop(0.5, "#FFD700");
+        grd.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grd; ctx.fillRect(0, 0, 128, 128);
+
+      } else if (type === "red_light") {
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, 50);
+        grd.addColorStop(0, "#FFAAAA");
+        grd.addColorStop(0.3, "#FF0000");
+        grd.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grd; ctx.fillRect(0, 0, 128, 128);
+
+      } else if (type === "gift_red") {
+        ctx.fillStyle = "#D32F2F"; ctx.fillRect(20, 20, 88, 88);
+        ctx.fillStyle = "#FFD700";
+        ctx.fillRect(54, 20, 20, 88); ctx.fillRect(20, 54, 88, 20);
+        ctx.strokeStyle = "rgba(0,0,0,0.3)"; ctx.lineWidth = 2;
+        ctx.strokeRect(20, 20, 88, 88);
+      }
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    const textures = {
+      gold: createCustomTexture("gold_glow"),
+      red: createCustomTexture("red_light"),
+      gift: createCustomTexture("gift_red"),
+    };
+
+    // ==========================================
+    // 2) CONFIG
+    // ==========================================
+    const CONFIG = {
+      goldCount: 2000,
+      redCount: 300,
+      giftCount: 150,
+      explodeRadius: 65,
+      photoOrbitRadius: 25,
+      treeHeight: 70,
+      treeBaseRadius: 35
+    };
+
+    let scene, camera, renderer;
+    let groupGold, groupRed, groupGift;
+    let photoMeshes = [];
+    let photoGroup;
+    let titleMesh, starMesh, loveMesh;
+
+    // States
+    let state = "TREE";
+
+    // Rotation
+    let galleryRotY = 0;
+    let swipeVelocity = 0;
+
+    // Mouse hover rotation
+    let mouseRotTarget = 0;
+    let mouseRotCurrent = 0;
+    let mouseDown = false;
+    let lastMouseX = 0;
+
+    // ==========================================
+    // 3) THREE.JS SYSTEM
+    // ==========================================
+    function init3D() {
+      const container = document.getElementById("canvas-container");
+      scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(0x000000, 0.002);
+
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.z = 100;
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      container.appendChild(renderer.domElement);
+
+      groupGold = createParticleSystem("gold", CONFIG.goldCount, 2.0);
+      groupRed  = createParticleSystem("red",  CONFIG.redCount,  3.5);
+      groupGift = createParticleSystem("gift", CONFIG.giftCount, 3.0);
+
+      createPhotos();
+      createDecorations();
+
+      initTouchControls();
+      initMouseControls();
+
+      animate();
+    }
+
+    function createParticleSystem(type, count, size) {
+      const pPositions = [];
+      const pExplodeTargets = [];
+      const pTreeTargets = [];
+      const sizes = [];
+      const phases = [];
+
+      for (let i = 0; i < count; i++) {
+        // TREE
+        const h = Math.random() * CONFIG.treeHeight;
+        const y = h - CONFIG.treeHeight / 2;
+        const radiusRatio = (type === "gold") ? Math.sqrt(Math.random()) : 0.9 + Math.random() * 0.1;
+        const maxR = (1 - (h / CONFIG.treeHeight)) * CONFIG.treeBaseRadius;
+        const r = maxR * radiusRatio;
+        const theta = Math.random() * Math.PI * 2;
+        pTreeTargets.push(r * Math.cos(theta), y, r * Math.sin(theta));
+
+        // EXPLODE
+        const u = Math.random();
+        const v = Math.random();
+        const phi = Math.acos(2 * v - 1);
+        const lam = 2 * Math.PI * u;
+        const radMult = (type === "gift") ? 1.2 : 1.0;
+        const rad = CONFIG.explodeRadius * Math.cbrt(Math.random()) * radMult;
+        pExplodeTargets.push(
+          rad * Math.sin(phi) * Math.cos(lam),
+          rad * Math.sin(phi) * Math.sin(lam),
+          rad * Math.cos(phi)
+        );
+
+        // INIT
+        pPositions.push(pTreeTargets[i * 3], pTreeTargets[i * 3 + 1], pTreeTargets[i * 3 + 2]);
+        sizes.push(size);
+        phases.push(Math.random() * Math.PI * 2);
+      }
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(pPositions, 3));
+      geo.setAttribute("size", new THREE.Float32BufferAttribute(sizes, 1));
+
+      const colors = new Float32Array(count * 3);
+      const baseColor = new THREE.Color();
+      if (type === "gold") baseColor.setHex(0xFFD700);
+      else if (type === "red") baseColor.setHex(0xFF0000);
+      else baseColor.setHex(0xFFFFFF);
+
+      for (let i = 0; i < count; i++) {
+        colors[i * 3] = baseColor.r;
+        colors[i * 3 + 1] = baseColor.g;
+        colors[i * 3 + 2] = baseColor.b;
+      }
+      geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+      geo.userData = {
+        tree: pTreeTargets,
+        explode: pExplodeTargets,
+        phases,
+        baseColor,
+        baseSize: size
+      };
+
+      const mat = new THREE.PointsMaterial({
+        size,
+        map: textures[type],
+        transparent: true,
+        opacity: 1.0,
+        vertexColors: true,
+        blending: (type === "gift") ? THREE.NormalBlending : THREE.AdditiveBlending,
+        depthWrite: false,
+        sizeAttenuation: true
+      });
+
+      const points = new THREE.Points(geo, mat);
+      scene.add(points);
+      return points;
+    }
+
+    function createPhotos() {
+      photoGroup = new THREE.Group();
+      scene.add(photoGroup);
+
+      const geo = new THREE.PlaneGeometry(8, 8);
+      const borderGeo = new THREE.PlaneGeometry(9, 9);
+      const borderMat = new THREE.MeshBasicMaterial({ color: 0xFFD700 });
+
+      for (let i = 0; i < 5; i++) {
+        const mat = new THREE.MeshBasicMaterial({ map: photoTextures[i], side: THREE.DoubleSide });
+        const mesh = new THREE.Mesh(geo, mat);
+
+        mesh.userData.src = photoFiles[i];
+
+        const border = new THREE.Mesh(borderGeo, borderMat);
+        border.position.z = -0.1;
+        mesh.add(border);
+
+        mesh.visible = false;
+        mesh.scale.set(0, 0, 0);
+
+        photoGroup.add(mesh);
+        photoMeshes.push(mesh);
+      }
+    }
+
+    function createDecorations() {
+      // MERRY CHRISTMAS
+      const canvas = document.createElement("canvas");
+      canvas.width = 1024; canvas.height = 256;
+      const ctx = canvas.getContext("2d");
+      ctx.font = 'bold italic 90px "Times New Roman"';
+      ctx.fillStyle = "#FFD700";
+      ctx.textAlign = "center";
+      ctx.shadowColor = "#FF0000";
+      ctx.shadowBlur = 40;
+      ctx.fillText("MERRY CHRISTMAS", 512, 130);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending });
+      titleMesh = new THREE.Mesh(new THREE.PlaneGeometry(60, 15), mat);
+      titleMesh.position.set(0, 50, 0);
+      scene.add(titleMesh);
+
+      // STAR
+      const starCanvas = document.createElement("canvas");
+      starCanvas.width = 128; starCanvas.height = 128;
+      const sCtx = starCanvas.getContext("2d");
+      sCtx.fillStyle = "#FFFF00"; sCtx.shadowColor = "#FFF"; sCtx.shadowBlur = 20;
+      sCtx.beginPath();
+      const cx = 64, cy = 64, outer = 50, inner = 20;
+      for (let i = 0; i < 5; i++) {
+        sCtx.lineTo(cx + Math.cos((18 + i * 72) / 180 * Math.PI) * outer, cy - Math.sin((18 + i * 72) / 180 * Math.PI) * outer);
+        sCtx.lineTo(cx + Math.cos((54 + i * 72) / 180 * Math.PI) * inner, cy - Math.sin((54 + i * 72) / 180 * Math.PI) * inner);
+      }
+      sCtx.closePath(); sCtx.fill();
+
+      const starTex = new THREE.CanvasTexture(starCanvas);
+      const starMat = new THREE.MeshBasicMaterial({ map: starTex, transparent: true, blending: THREE.AdditiveBlending });
+      starMesh = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), starMat);
+      starMesh.position.set(0, CONFIG.treeHeight / 2 + 2, 0);
+      scene.add(starMesh);
+
+      // I LOVE YOU ❤️
+      const loveCanvas = document.createElement("canvas");
+      loveCanvas.width = 1024; loveCanvas.height = 256;
+      const lCtx = loveCanvas.getContext("2d");
+      lCtx.font = 'bold 120px "Segoe UI", sans-serif';
+      lCtx.fillStyle = "#FF69B4";
+      lCtx.textAlign = "center";
+      lCtx.shadowColor = "#FF1493";
+      lCtx.shadowBlur = 40;
+      lCtx.fillText("I LOVE YOU ❤️", 512, 130);
+
+      const loveTex = new THREE.CanvasTexture(loveCanvas);
+      const loveMat = new THREE.MeshBasicMaterial({
+        map: loveTex,
+        transparent: true,
+        blending: THREE.AdditiveBlending
+      });
+
+      loveMesh = new THREE.Mesh(new THREE.PlaneGeometry(70, 18), loveMat);
+      loveMesh.position.set(0, 0, 20);
+      loveMesh.visible = true;
+      scene.add(loveMesh);
+    }
+
+    function updateParticleGroup(group, type, targetState, speed, rotY, time) {
+      const positions = group.geometry.attributes.position.array;
+      const sizes = group.geometry.attributes.size.array;
+      const colors = group.geometry.attributes.color.array;
+      const phases = group.geometry.userData.phases;
+      const baseColor = group.geometry.userData.baseColor;
+      const baseSize = group.geometry.userData.baseSize;
+
+      const targets = group.geometry.userData[(targetState === "TREE") ? "tree" : "explode"];
+
+      for (let i = 0; i < positions.length; i++) {
+        positions[i] += (targets[i] - positions[i]) * speed;
+      }
+      group.geometry.attributes.position.needsUpdate = true;
+
+      const count = positions.length / 3;
+
+      if (targetState === "TREE") {
+        group.rotation.y += (rotY - group.rotation.y) * 0.08;
+
+        for (let i = 0; i < count; i++) {
+          sizes[i] = baseSize;
+          let brightness = 1.0;
+          if (type === "red") brightness = 0.5 + 0.5 * Math.sin(time * 3 + phases[i]);
+          else if (type === "gold") brightness = 0.8 + 0.4 * Math.sin(time * 10 + phases[i]);
+
+          colors[i * 3] = baseColor.r * brightness;
+          colors[i * 3 + 1] = baseColor.g * brightness;
+          colors[i * 3 + 2] = baseColor.b * brightness;
+        }
+        group.geometry.attributes.color.needsUpdate = true;
+        group.geometry.attributes.size.needsUpdate = true;
+
+      } else {
+        group.scale.set(1, 1, 1);
+        group.rotation.y += (rotY - group.rotation.y) * 0.1;
+
+        for (let i = 0; i < count; i++) {
+          sizes[i] = baseSize;
+          let brightness = 1.0;
+          if (type === "gold" || type === "red") brightness = 0.8 + 0.5 * Math.sin(time * 12 + phases[i]);
+
+          colors[i * 3] = baseColor.r * brightness;
+          colors[i * 3 + 1] = baseColor.g * brightness;
+          colors[i * 3 + 2] = baseColor.b * brightness;
+        }
+        group.geometry.attributes.size.needsUpdate = true;
+        group.geometry.attributes.color.needsUpdate = true;
+      }
+    }
+
+    // ==========================================
+    // 4) PICKING + TOUCH (with PINCH SWITCH)
+    // ==========================================
+    const raycaster = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+
+    let tapCandidate = false;
+    let lastX = 0, lastY = 0;
+
+    // pinch switch vars (MAIN canvas)
+    let isPinching = false;
+    let lastPinchDist = 0;
+    let pinchAccum = 0;
+    const PINCH_SWITCH_THRESHOLD = 22;
+
+    function touchDist(t1, t2) {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.hypot(dx, dy);
+    }
+
+    function initTouchControls() {
+      renderer.domElement.style.touchAction = "none";
+
+      renderer.domElement.addEventListener("touchstart", (e) => {
+        if (!e.touches.length) return;
+
+        if (e.touches.length === 2) {
+          isPinching = true;
+          tapCandidate = false;
+          swipeVelocity = 0;
+          pinchAccum = 0;
+          lastPinchDist = touchDist(e.touches[0], e.touches[1]);
+          return;
+        }
+
+        const t = e.touches[0];
+        tapCandidate = true;
+        lastX = t.clientX;
+        lastY = t.clientY;
+        swipeVelocity = 0;
+      }, { passive: false });
+
+      renderer.domElement.addEventListener("touchmove", (e) => {
+        if (!e.touches.length) return;
+        e.preventDefault();
+
+        if (e.touches.length === 2) {
+          isPinching = true;
+          tapCandidate = false;
+
+          const d = touchDist(e.touches[0], e.touches[1]);
+          const delta = d - lastPinchDist; // >0 open, <0 close
+          lastPinchDist = d;
+
+          pinchAccum += delta;
+
+          if (pinchAccum > PINCH_SWITCH_THRESHOLD) {
+            state = "EXPLODE"; // pinch out -> show photos
+            pinchAccum = 0;
+          } else if (pinchAccum < -PINCH_SWITCH_THRESHOLD) {
+            state = "TREE"; // pinch in -> back to tree
+            pinchAccum = 0;
+          }
+          return;
+        }
+
+        const t = e.touches[0];
+        const dx = t.clientX - lastX;
+        const dy = t.clientY - lastY;
+
+        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) tapCandidate = false;
+
+        const rotSpeed = 0.005;
+        galleryRotY += dx * rotSpeed;
+        swipeVelocity = dx * rotSpeed;
+
+        lastX = t.clientX;
+        lastY = t.clientY;
+      }, { passive: false });
+
+      renderer.domElement.addEventListener("touchend", (e) => {
+        if (e.touches.length < 2) {
+          isPinching = false;
+          lastPinchDist = 0;
+          pinchAccum = 0;
+        }
+
+        if (!tapCandidate) return;
+
+        const touch = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
+        if (!touch) return;
+
+        if (state === "TREE") {
+          state = "EXPLODE";
+          return;
+        }
+
+        const hit = pickPhotoByTouch(touch);
+        if (hit) openViewer(hit.userData?.src);
+      }, { passive: false });
+    }
+
+    function setNDCFromTouch(touch) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      ndc.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+      ndc.y = -(((touch.clientY - rect.top) / rect.height) * 2 - 1);
+    }
+
+    function pickPhotoByTouch(touch) {
+      setNDCFromTouch(touch);
+      raycaster.setFromCamera(ndc, camera);
+      const hits = raycaster.intersectObjects(photoMeshes, true);
+      return hits.length ? hits[0].object : null;
+    }
+
+    function updateSwipeInertia() {
+      if (Math.abs(swipeVelocity) > 0.00008) {
+        galleryRotY += swipeVelocity;
+        swipeVelocity *= 0.92;
+      }
+    }
+
+    // ==========================================
+    // 4B) MOUSE (laptop/desktop)
+    // ==========================================
+    function initMouseControls() {
+      const el = renderer.domElement;
+
+      el.addEventListener("mousemove", (e) => {
+        const rect = el.getBoundingClientRect();
+        const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouseRotTarget = nx * 1.6;
+      });
+
+      el.addEventListener("mousedown", (e) => {
+        mouseDown = true;
+        lastMouseX = e.clientX;
+      });
+
+      window.addEventListener("mouseup", () => { mouseDown = false; });
+
+      window.addEventListener("mousemove", (e) => {
+        if (!mouseDown) return;
+        const dx = e.clientX - lastMouseX;
+        lastMouseX = e.clientX;
+
+        galleryRotY += dx * 0.005;
+        swipeVelocity = dx * 0.005;
+      });
+
+      el.addEventListener("click", (e) => {
+        if (state === "TREE") {
+          state = "EXPLODE";
+          return;
+        }
+        const hit = pickPhotoByMouse(e);
+        if (hit) openViewer(hit.userData?.src);
+      });
+
+      window.addEventListener("keydown", (e) => {
+        if (e.code === "Space") {
+          e.preventDefault();
+          state = (state === "TREE") ? "EXPLODE" : "TREE";
+        }
+        if (e.code === "Escape") closeViewer();
+      });
+
+      function pickPhotoByMouse(e) {
+        const rect = el.getBoundingClientRect();
+        ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        ndc.y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+        raycaster.setFromCamera(ndc, camera);
+        const hits = raycaster.intersectObjects(photoMeshes, true);
+        return hits.length ? hits[0].object : null;
+      }
+    }
+
+    // ==========================================
+    // 5) VIEWER (drag + pinch + wheel zoom)
+    // ==========================================
+    const viewer = document.getElementById("viewer");
+    const viewerImg = document.getElementById("viewerImg");
+
+    let vScale = 1, vX = 0, vY = 0;
+    let vMode = null;
+    let last1 = null, last2 = null;
+
+    function applyViewerTransform() {
+      viewerImg.style.transform = `translate(calc(-50% + ${vX}px), calc(-50% + ${vY}px)) scale(${vScale})`;
+    }
+    function resetViewerTransform() {
+      vScale = 1; vX = 0; vY = 0;
+      applyViewerTransform();
+    }
+    function openViewer(src) {
+      if (!src) return;
+      viewerImg.src = src;
+      viewer.style.display = "block";
+      resetViewerTransform();
+    }
+    function closeViewer() {
+      viewer.style.display = "none";
+    }
+
+    viewer.addEventListener("click", closeViewer);
+
+    // desktop drag
+    let vMouseDown = false;
+    let vLastMX = 0, vLastMY = 0;
+
+    viewer.addEventListener("mousedown", (e) => {
+      vMouseDown = true;
+      vLastMX = e.clientX;
+      vLastMY = e.clientY;
+    });
+
+    window.addEventListener("mouseup", () => { vMouseDown = false; });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!vMouseDown || viewer.style.display !== "block") return;
+      vX += (e.clientX - vLastMX);
+      vY += (e.clientY - vLastMY);
+      vLastMX = e.clientX;
+      vLastMY = e.clientY;
+      applyViewerTransform();
+    });
+
+    viewer.addEventListener("wheel", (e) => {
+      if (viewer.style.display !== "block") return;
+      e.preventDefault();
+      const delta = Math.sign(e.deltaY);
+      const factor = (delta > 0) ? 0.92 : 1.08;
+      vScale = Math.max(0.5, Math.min(4, vScale * factor));
+      applyViewerTransform();
+    }, { passive: false });
+
+    function dist(a, b) {
+      const dx = a.clientX - b.clientX;
+      const dy = a.clientY - b.clientY;
+      return Math.hypot(dx, dy);
+    }
+
+    // touch drag/pinch in viewer
+    viewer.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      if (e.touches.length === 1) {
+        vMode = "drag";
+        last1 = e.touches[0];
+      } else if (e.touches.length === 2) {
+        vMode = "pinch";
+        last1 = e.touches[0];
+        last2 = e.touches[1];
+      }
+    }, { passive: false });
+
+    viewer.addEventListener("touchmove", (e) => {
+      e.preventDefault();
+      if (vMode === "drag" && e.touches.length === 1) {
+        const t = e.touches[0];
+        vX += (t.clientX - last1.clientX);
+        vY += (t.clientY - last1.clientY);
+        last1 = t;
+        applyViewerTransform();
+      } else if (vMode === "pinch" && e.touches.length === 2) {
+        const t1 = e.touches[0], t2 = e.touches[1];
+        const d0 = dist(last1, last2);
+        const d1 = dist(t1, t2);
+        const factor = d1 / (d0 || d1);
+        vScale = Math.max(0.5, Math.min(4, vScale * factor));
+        last1 = t1; last2 = t2;
+        applyViewerTransform();
+      }
+    }, { passive: false });
+
+    viewer.addEventListener("touchend", () => {
+      vMode = null;
+      last1 = null; last2 = null;
+    }, { passive: false });
+
+    // ==========================================
+    // 6) ANIMATE LOOP
+    // ==========================================
+    function animate() {
+      requestAnimationFrame(animate);
+      const time = Date.now() * 0.001;
+      const speed = 0.08;
+
+      updateSwipeInertia();
+
+      mouseRotCurrent += (mouseRotTarget - mouseRotCurrent) * 0.08;
+      const rotY = galleryRotY + mouseRotCurrent;
+
+      updateParticleGroup(groupGold, "gold", state, speed, rotY, time);
+      updateParticleGroup(groupRed,  "red",  state, speed, rotY, time);
+      updateParticleGroup(groupGift, "gift", state, speed, rotY, time);
+
+      if (state === "TREE") {
+        titleMesh.visible = true;
+        starMesh.visible = true;
+        loveMesh.visible = true;
+
+        titleMesh.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
+        starMesh.rotation.z -= 0.02;
+        starMesh.material.opacity = 0.7 + 0.3 * Math.sin(time * 5);
+
+        const s = 1 + Math.abs(Math.sin(time * 3)) * 0.12;
+        loveMesh.scale.set(s, s, 1);
+
+        photoMeshes.forEach(m => {
+          m.scale.lerp(new THREE.Vector3(0, 0, 0), 0.1);
+          m.visible = false;
+        });
+
+      } else {
+        titleMesh.visible = false;
+        starMesh.visible = false;
+        loveMesh.visible = false;
+
+        if (photoGroup) photoGroup.rotation.y = rotY;
+
+        const angleStep = (Math.PI * 2) / 5;
+
+        photoMeshes.forEach((mesh, i) => {
+          mesh.visible = true;
+
+          const angle = i * angleStep;
+          const x = Math.sin(angle) * CONFIG.photoOrbitRadius;
+          const z = Math.cos(angle) * CONFIG.photoOrbitRadius;
+          const y = Math.sin(time + i) * 3;
+
+          mesh.position.lerp(new THREE.Vector3(x, y, z), 0.1);
+          mesh.lookAt(camera.position);
+
+          if (z > 5) {
+            const ds = 1.0 + (z / CONFIG.photoOrbitRadius) * 0.8;
+            mesh.scale.lerp(new THREE.Vector3(ds, ds, ds), 0.1);
+          } else {
+            mesh.scale.lerp(new THREE.Vector3(0.6, 0.6, 0.6), 0.1);
+          }
+        });
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // ==========================================
+    // 7) START
+    // ==========================================
+    function startSystem() {
+      document.getElementById("btnStart").style.display = "none";
+      bgMusic.play().catch(() => {});
+      init3D();
+    }
+
+    window.addEventListener("resize", () => {
+      if (camera) {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+    });
+  </script>
+</body>
+</html>
